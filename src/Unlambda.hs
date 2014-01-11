@@ -41,6 +41,28 @@ instance Profunctor p => Monad (Rec p a) where
     Place b >>= f = f b
     Roll bs >>= f = Roll $ rmap (>>= f) bs
 
+data Trie a = Trie (Maybe a) (M.Map Char (Trie a))
+
+empty :: Trie a
+empty = Trie Nothing M.empty
+
+instance Functor Trie where
+    fmap f (Trie v s) = Trie (fmap f v) (fmap (fmap f) s)
+
+insert :: String -> a -> Trie a -> Trie a
+insert [] v (Trie _ s) = Trie (Just v) s
+insert (x:xs) v (Trie a s) = Trie a s' where
+    s' = M.alter (Just . f) x s
+    f Nothing = insert xs v empty
+    f (Just t) = insert xs v t
+
+longestMatch :: String -> Trie a -> Maybe a
+longestMatch [] (Trie v _) = v
+longestMatch (x:xs) (Trie v s) = v' `mplus` v where
+    v' = do
+        sub <- M.lookup x s
+        longestMatch xs sub
+
 cata :: Profunctor p => (p a b -> b) -> Rec p a b -> b
 cata _ (Place b) = b
 cata phi (Roll bs) = phi (rmap (cata phi) bs)
@@ -64,7 +86,9 @@ noop :: End Exp
 noop = Roll Noop
 
 builtin :: String -> End Exp
-builtin s = Roll $ Frag (showString s) id id noop
+builtin s = blam $ \x -> Roll $ Frag s' fr id noop where
+    fr = s' . showString "->fn(" . s' . showString ",input,cont);"
+    s' = showString "(&" . showString s . showChar ')'
 
 dot :: Char -> End Exp
 dot c = blam $ \x -> Roll $ Frag id putc id (var x)
@@ -105,19 +129,16 @@ dump b = cata phi b vars "" where
         ls = if b then showChar '#' . base . showChar '#' else base
         base = showChar '\\' . showString x . showString " -> " .
             h (const (showString x)) xs
---    phi (Chr c) xs = showChar '.' . showChar c . showChar ' '
---    phi (Builtin b) xs = showChar '&' . showString b
     phi (Frag i b c s) xs = showString "#(" . i . showChar ',' . b .
-        showChar ',' . c . showString ")#" . s xs
+        showChar ',' . c . showChar '^' . s xs . showString ")#"
     phi Noop _ = id
     phi Promise _ = showString "{PROMISE}"
     strs = fmap (:[]) ['a'..'z']
     vars = strs ++ zipWith (++) (cycle strs) vars
 
-compileBuiltins = foldr (.) id bic where
+compileBuiltins bi = foldr (.) id bic where
     bic = map comp bi
     comp (name, exp) = toC name $ optimize $ toCPS (unsafeCoerce exp)
-    bi = [("s",s), ("i",i), ("k", k), ("v", v)]
 
 toFrag :: String -> End Exp -> ExpF () ()
 toFrag name b = Frag fi fb fc () where
@@ -202,48 +223,87 @@ toFrag name b = Frag fi fb fc () where
     phi Noop _ _ _ xs = (Frag id id id S.empty, xs)
 
 toC :: String -> End Exp -> String -> String
-toC n b = frag where
+toC n b = frag . showString "\n/*" . showString (dump b) . showString "*/\n" where
     (Frag _ _ frag _) = toFrag n b
 
-toCValue :: End Exp -> String
-toCValue b = include . compileBuiltins . c . main $ "" where
+toCValue :: [(String, Exp a a)] -> End Exp -> String
+toCValue bi b = include . compileBuiltins bi . c . main $ "" where
     include = showString core
     c = toC "p" b
     main = showString "int main() { initialize(&p,&ex);}\n"
 
-compile :: String -> Either String (Exp a a)
-compile input = case compile' 0 input of
-    (Right [x]) -> Right x
-    (Right []) -> Left "No Input"
+compile :: String -> Either String ([(String, Exp a a)], Exp a a)
+compile input = case preCompile 0 input of
+    (Right ([x], r)) -> Right (bis, exp) where
+        [exp] = compile' trie (x [])
+        (bis, trie) = builtinCommon (fmap ($[]) r)
+    (Right ([], _)) -> Left "No Input"
     (Right _) -> Left "Unconsumed input"
     (Left err) -> Left err
 
-compile' :: Int -> String -> Either String [Exp a a]
-compile' _ [] = Right []
-compile' c ('`':xs) = 
-    case compile' (c + 1) xs of
-        (Right (f:g:xxs)) -> Right $ (app f g):xxs
-        (Right _) -> Left $ "` failed at character " ++ show c
-        l -> l
-compile' c ('s':xs) = fmap (s:) $ compile' (c + 1) xs
-compile' c ('k':xs) = fmap (k:) $ compile' (c + 1) xs
-compile' c ('i':xs) = fmap (i:) $ compile' (c + 1) xs
-compile' c ('d':xs) = fmap (d:) $ compile' (c + 1) xs
-compile' c ('v':xs) = fmap (v:) $ compile' (c + 1) xs
-compile' c ('c':xs) = fmap (callcc:) $ compile' (c + 1) xs
-compile' c ('r':xs) = fmap ((dot '\n'):) $ compile' (c + 1) xs
-compile' c ['.'] = Left $ ". failed at character " ++ show c
-compile' c ('.':x:xs) = fmap ((dot x):) $
-    compile' (c + 2) xs
-compile' c (_:xs) = compile' (c + 1) xs
+compile' :: Trie (Exp a a) -> String -> [Exp a a]
+compile' t [] = []
+compile' t l@('`':xs) = a:xxs where
+    (f:g:xxs) = compile' t xs
+    a = case longestMatch l t of
+        (Just b) -> b
+        _ -> app f g
+compile' t ('s':xs) = s:(compile' t xs)
+compile' t ('k':xs) = k:(compile' t xs)
+compile' t ('i':xs) = i:(compile' t xs)
+compile' t ('d':xs) = d:(compile' t xs)
+compile' t ('v':xs) = v:(compile' t xs)
+compile' t ('c':xs) = callcc:(compile' t xs)
+compile' t ('r':xs) = (dot '\n'):(compile' t xs)
+compile' t ('.':x:xs) = (dot x):(compile' t xs)
 
 compileFile :: FilePath -> FilePath -> IO ()
 compileFile input output = do
     contents <- readFile input
     case compile contents of
         (Left err) -> print $ "Error: " ++ err
-        (Right exp) -> writeFile output $ toCValue $
+        (Right (bis, exp)) -> writeFile output $ toCValue bis $
             optimize $ toCPS $ computePromise $ optimize $ unsafeCoerce exp
+
+preCompile :: Int -> String ->
+    Either String ([String -> String], [String -> String])
+preCompile _ [] = Right ([], [])
+preCompile c ('`':xs) = case preCompile (c + 1) xs of
+    (Right ((f:g:xxs), l)) -> Right (h:xxs, h:l) where h = showChar '`' . f . g
+    (Right _) -> Left $ "` failed at character " ++ show c
+    l -> l
+preCompile c ['.'] = Left $ ". failed at character " ++ show c
+preCompile c ('.':x:xs) = case preCompile (c + 2) xs of
+    (Right (xxs, l)) -> Right (h:xxs, l) where h = showString ['.',x]
+    l -> l
+preCompile c (x:xs) = case (M.lookup x builtins, preCompile (c + 1) xs) of
+    (Just h, Right (xxs, l)) -> Right (h:xxs, l)
+    (_, rest) -> rest
+  where builtins = M.fromList $ do
+            c <- ['s','k','i','d','v','c','r']
+            return $ (c, showChar c)
+
+countFreq :: Ord a => [a] -> M.Map a Int
+countFreq = foldr (M.alter inc) M.empty where
+    inc = Just . maybe 1 (1+)
+
+builtinCommon :: [String] -> ([(String, Exp a a)], Trie (Exp a a))
+builtinCommon strs = (bis, trie) where
+    common = M.filter (> 4) $ countFreq strs
+    fns = do
+        (s, _) <- M.toList common
+        let [c] = compile' empty s
+        guard . not $ containsPromise c
+        return $ (s, c)
+    names = zip (fmap fst fns) ["bi_" ++ show x | x <- [0..]]
+    namesM = M.fromList names
+    bis = do
+        (s, e) <- fns
+        let (Just n) = M.lookup s namesM
+        return (n, e)
+    trie = foldr (uncurry insert) empty $ do
+        (s, n) <- names
+        return (s, builtin n)
 
 optimize :: End Exp -> End Exp
 optimize b = opt where
@@ -309,6 +369,7 @@ toCPS b = cps where
         appExp = l (Just lk)
         lk = lam $ \l -> r (Just $ rk l)
         rk l = lam $ \m -> appCPS (var l) (var m) k
+    phi (AppCPS l r k) _ = error "Duplicate call to toCPS"
     phi (Lam b f) Nothing = lamExp where
         lf = if b then blam else lam
         lamExp = lf $ \x ->
@@ -327,6 +388,14 @@ toCPS b = cps where
         l' = l v
     phi Noop Nothing = noop
     phi Noop (Just v) = v
+
+containsPromise :: End Exp -> Bool
+containsPromise b = cata phi b where
+    phi (App l b) = l && b
+    phi (Lam _ f) = f False
+    phi Promise = True
+    phi Noop = False
+    phi (Frag _ _ _ l) = l
 
 computePromise :: End Exp -> End Exp
 computePromise b = prom where
