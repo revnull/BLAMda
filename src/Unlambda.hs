@@ -391,7 +391,7 @@ toCPS b = cps where
 
 containsPromise :: End Exp -> Bool
 containsPromise b = cata phi b where
-    phi (App l b) = l && b
+    phi (App l b) = l || b
     phi (Lam _ f) = f False
     phi Promise = True
     phi Noop = False
