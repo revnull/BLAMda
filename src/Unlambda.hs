@@ -144,7 +144,7 @@ toFrag :: String -> End Exp -> ExpF () ()
 toFrag name b = Frag fi fb fc () where
     (Frag fi fb fc _, _) = cata phi b 0 False M.empty vars
     vars = (showString name):(fmap ((showString name .) . shows) [0..])
-    ref = (showChar '&' .)
+    ref x = showString "(&" . x . showString ")"
 
     phi (App l r) 0 top vs (appId:xs) = appExp where
         (Frag li lb lc _, xs') = l 0 False vs xs 
@@ -211,9 +211,12 @@ toFrag name b = Frag fi fb fc () where
                     else showString "self->data[" . shows sb . showString "];"
             return $ fnId . showString "->data[" . shows xb . showString "]=" .
                 bind
+        fr = if top
+            then showString "eval(&" . fnId . showString ",cont);"
+            else id
         fnC = hc . proto . fn
-        lamExp = if d == 0
-            then (Frag (ref fnId) id (fnC . clos) hv, xs')
+        lamExp = if M.size vs'' == 0
+            then (Frag (ref fnId) fr (fnC . clos) hv, xs')
             else (Frag fnId frag fnC hv, xs')
 
     phi (Frag i b c l) d top vs xs = fragExp where
