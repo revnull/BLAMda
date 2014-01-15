@@ -205,9 +205,9 @@ void initialize (closure *input, closure *cont) {
                     c = (closure *)(((char *)top) - (sizeof(closure) +
                                     sp->size * sizeof(closure*)));
                     top = (void*) c;
+                    c->moved = 0;
                 }
                 sp->moved = c;
-                c->moved = 0;
                 c->size = sp->size;
                 c->fn = sp->fn;
                 c->age = sp->age + 1;
