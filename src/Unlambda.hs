@@ -295,7 +295,7 @@ builtinCommon strs = (bis, trie) where
         let [c] = compile' empty s
         guard . not $ containsPromise c
         return $ (s, c)
-    names = zip (fmap fst fns) ["bi_" ++ show x | x <- [0..]]
+    names = zip (fmap fst fns) ["bi_" ++ show x ++ "_" | x <- [0..]]
     namesM = M.fromList names
     bis = do
         (s, e) <- fns
