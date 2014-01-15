@@ -294,7 +294,7 @@ countFreq = foldr (M.alter inc) M.empty where
 
 builtinCommon :: [String] -> ([(String, Exp a a)], Trie (Exp a a))
 builtinCommon strs = (bis, trie) where
-    common = M.filter (> 4) $ countFreq strs
+    common = M.filter (> 2) $ countFreq strs
     fns = do
         (s, _) <- M.toList common
         let [c] = compile' empty s
