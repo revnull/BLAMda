@@ -87,7 +87,7 @@ noop = Roll Noop
 
 builtin :: String -> End Exp
 builtin s = blam $ \x -> Roll $ Frag s' fr id noop where
-    fr = s' . showString "->fn(" . s' . showString ",input,cont);"
+    fr = s' . showString "->fn(" . s' . showString ",y,z);"
     s' = showString "(&" . showString s . showChar ')'
 
 dot :: Char -> End Exp
@@ -112,7 +112,7 @@ d = Roll $ Promise
 
 callcc :: End Exp
 callcc = blam $ \x -> Roll $ Frag id (showString fr) id noop where
-    fr = "ALLOC_F(c,1);c->fn=cc;c->data[0]=cont;input->fn(input,c,cont);"
+    fr = "ALLOC_F(c,1);c->fn=cc;c->d[0]=z;y->fn(y,c,z);"
 
 type End p = forall x. p x x
 
@@ -149,7 +149,7 @@ toFrag name b = Frag fi fb fc () where
     phi (App l r) 0 top vs (appId:xs) = appExp where
         (Frag li lb lc _, xs') = l 0 False vs xs 
         (Frag ri rb rc _, xs'') = r 0 False vs xs'
-        appStr = lc . rc . lb . rb . showString "closure " . appId .
+        appStr = lc . rc . lb . rb . showString "f " . appId .
             showString "= {&root,0,apply,2,{" . li . showChar ',' .
             ri . showString "}};\n"
         appExp = (Frag (ref appId) id appStr S.empty, xs'')
@@ -158,7 +158,7 @@ toFrag name b = Frag fi fb fc () where
         (Frag li lb lc lv, xs') = l d False vs xs 
         (Frag ri rb rc rv, xs'') = r d False vs xs'
         appStr = lb . rb . li . showString "->fn(" . li . showChar ',' .
-            ri . showString ",cont);";
+            ri . showString ",z);";
         vs' = S.union lv rv
         appExp = (Frag appId appStr (lc . rc) vs', xs'')
 
@@ -167,8 +167,8 @@ toFrag name b = Frag fi fb fc () where
         (Frag ri rb rc rv, xs'') = r d False vs xs'
         (Frag ki kb kc kv, xs''') = k d False vs xs''
         appStr = lb . rb . kb . 
-            showString "ALLOC_F(c,2);c->fn=compose;c->data[0]=" . ki .
-            showString ";c->data[1]=cont;" . li . showString "->fn(" . li .
+            showString "ALLOC_F(c,2);c->fn=compose;c->d[0]=" . ki .
+            showString ";c->d[1]=z;" . li . showString "->fn(" . li .
             showChar ',' . ri . showString ",c);"
         vs' = S.union kv $ S.union lv rv 
         appExp = (Frag appId appStr (lc . rc . kc) vs', xs''')
@@ -176,11 +176,11 @@ toFrag name b = Frag fi fb fc () where
     phi (Lam _ h) d top vs (fnId:xs) = lamExp where
         hf d' top vs' xs = (Frag v ev id vs'', xs) where
             (v,vs'') = if d == d' - 1
-                then (showString "input", S.empty)
-                else (showString "self->data[" . shows w . showChar ']',
+                then (showString "y", S.empty)
+                else (showString "x->d[" . shows w . showChar ']',
                     S.singleton d)
             ev = if top
-                then showString "eval(" . v . showString ",cont);"
+                then showString "eval(" . v . showString ",z);"
                 else id
             w = fromJust $ M.lookup d vs'
         vs' = if S.member d hv
@@ -190,30 +190,30 @@ toFrag name b = Frag fi fb fc () where
         (Frag hi hb hc hv, xs') = h hf (d + 1) True vs' xs
         fnname = showChar 'l' . fnId
         proto = showString "void " . fnname . 
-            showString "(closure *self, closure *input, closure *cont);"
+            showString "(f *x, f *y, f *z);"
         fn = showString "void " . fnname . 
-            showString "(closure *self, closure *input, closure *cont){\n" .
+            showString "(f *x, f *y, f *z){\n" .
             showString "CHECK(" . fnname . showString ");" . hb .
             showString "}\n"
-        clos = showString "closure " . fnId .
+        clos = showString "f " . fnId .
             showString "={&root,0," . fnname . showString ",0};\n"
         frag = showString "ALLOC_F(" . fnId . showChar ',' . shows (M.size vs'') .
             showString ");" . fnId . showString "->fn=" . fnname .
             showString ";" . copyvars . callFrag
         callFrag = if top
-            then showString "eval(" . fnId . showString ",cont);"
+            then showString "eval(" . fnId . showString ",z);"
             else id
         copyvars = foldr (.) id $ do
             i <- [0..d-1]
             (Just sb) <- return $ M.lookup i vs
             (Just xb) <- return $ M.lookup i vs'
             let bind = if (sb < 0)
-                    then showString "input;"
-                    else showString "self->data[" . shows sb . showString "];"
-            return $ fnId . showString "->data[" . shows xb . showString "]=" .
+                    then showString "y;"
+                    else showString "x->d[" . shows sb . showString "];"
+            return $ fnId . showString "->d[" . shows xb . showString "]=" .
                 bind
         fr = if top
-            then showString "eval(&" . fnId . showString ",cont);"
+            then showString "eval(&" . fnId . showString ",z);"
             else id
         fnC = hc . proto . fn
         lamExp = if M.size vs'' == 0
@@ -242,7 +242,7 @@ compile input = case preCompile 0 input of
         [exp] = compile' trie (x [])
         (bis, trie) = builtinCommon (fmap ($[]) r)
     (Right ([], _)) -> Left "No Input"
-    (Right _) -> Left "Unconsumed input"
+    (Right _) -> Left "Unconsumed Input"
     (Left err) -> Left err
 
 compile' :: Trie (Exp a a) -> String -> [Exp a a]
