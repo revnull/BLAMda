@@ -138,7 +138,7 @@ dump b = cata phi b vars "" where
 
 compileBuiltins bi = foldr (.) id bic where
     bic = map comp bi
-    comp (name, exp) = toC name $ optimize $ toCPS (unsafeCoerce exp)
+    comp (name, exp) = toC name $ optimize $ toCPS $ optimize (unsafeCoerce exp)
 
 toFrag :: String -> End Exp -> ExpF () ()
 toFrag name b = Frag fi fb fc () where
@@ -192,8 +192,9 @@ toFrag name b = Frag fi fb fc () where
         proto = showString "void " . fnname . 
             showString "(closure *self, closure *input, closure *cont);"
         fn = showString "void " . fnname . 
-            showString "(closure *self, closure *input, closure *cont) {\n" .
-            hb . showString "}\n"
+            showString "(closure *self, closure *input, closure *cont){\n" .
+            showString "CHECK(" . fnname . showString ");" . hb .
+            showString "}\n"
         clos = showString "closure " . fnId .
             showString "={&root,0," . fnname . showString ",0};\n"
         frag = showString "ALLOC_F(" . fnId . showChar ',' . shows (M.size vs'') .
@@ -266,7 +267,8 @@ compileFile input output = do
     case compile contents of
         (Left err) -> print $ "Error: " ++ err
         (Right (bis, exp)) -> writeFile output $ toCValue bis $
-            optimize $ toCPS $ computePromise $ optimize $ unsafeCoerce exp
+            optimize $ toCPS $ optimize $ computePromise $ 
+            optimize $ unsafeCoerce exp
 
 preCompile :: Int -> String ->
     Either String ([String -> String], [String -> String])

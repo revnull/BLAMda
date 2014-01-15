@@ -17,8 +17,10 @@ typedef struct closure {
 ucontext_t trampoline;
 ucontext_t ucp;
 void *call_stack = NULL;
-closure *temp_eval = NULL;
+closure *temp_self = NULL;
+closure *temp_input = NULL;
 closure *temp_cont = NULL;
+void (*temp_fn)(struct closure*, struct closure*, struct closure*);
 
 int allocations;
 
@@ -26,6 +28,9 @@ int allocations;
 #define OLD_AGE 10
 
 #define ALLOC_F(v,b) closure* v = alloca(sizeof(closure) + (b) * sizeof(closure*));allocations++;v->moved=0;v->age=0;v->size=(b);
+#define CHECK(fn) if ((((void *)&input) - call_stack) < 4096) {\
+        temp_self = self;temp_input = input;temp_cont = cont;temp_fn = fn;\
+        setcontext(&trampoline);}
 
 closure root = { (closure *) 0xbadbadbad, 0, 0, 0 };
 
@@ -40,9 +45,14 @@ void exit_c(closure *self, closure *input, closure *cont) {
 }
 
 void eval(closure *input, closure *cont) {
+    if ((((void *)&input) - call_stack) < 0) {
+        fprintf(stderr, "TOO FAR!\n");
+    }
     if ((((void *)&input) - call_stack) < 4096) {
-        temp_eval = input;
+        temp_self = NULL;
+        temp_input = input;
         temp_cont = cont;
+        temp_fn = NULL;
         setcontext(&trampoline);
     }
 
@@ -138,7 +148,6 @@ void initialize (closure *input, closure *cont) {
     void *new_stack, *top;
     closure *c;
     closure *sp;
-    int st = 0;
     int i;
 
     for(i=0; i<2; i++) {
@@ -156,14 +165,16 @@ void initialize (closure *input, closure *cont) {
     getcontext(&ucp);
 
     if (call_stack) {
+        int st = 0;
         
         current = (current + 1) & 1;
         new_stack = bases[current];
        
         top = new_stack + PSTACK_SIZE;
 
-        stacks[st++] = temp_eval;
-        stacks[st++] = temp_cont;
+        if (temp_self) stacks[st++] = temp_self;
+        if (temp_input) stacks[st++] = temp_input;
+        if (temp_cont) stacks[st++] = temp_cont;
 
 
         while(st) {
@@ -219,17 +230,24 @@ void initialize (closure *input, closure *cont) {
 
         }
 
-        if (temp_eval->moved != &root) {
-            temp_eval = temp_eval->moved;
+        if (temp_self && temp_self->moved != &root) {
+            temp_self = temp_self->moved;
         }
-        if (temp_cont->moved != &root) {
+        if (temp_input && temp_input->moved != &root) {
+            temp_input = temp_input->moved;
+        }
+        if (temp_cont && temp_cont->moved != &root) {
             temp_cont = temp_cont->moved;
         }
         ucp.uc_stack.ss_sp = new_stack;
         ucp.uc_stack.ss_size = top - new_stack;
         call_stack = new_stack;
 
-    	makecontext(&ucp, (void (*)(void))eval, 2, temp_eval, temp_cont);
+        if (!temp_fn) {
+    	    makecontext(&ucp, (void (*)(void))eval, 2, temp_input, temp_cont);
+        } else {
+    	    makecontext(&ucp, (void (*)(void))temp_fn, 3, temp_self, temp_input, temp_cont);
+        }
     } else {
         ucp.uc_stack.ss_sp = call_stack = bases[0];
     	ucp.uc_stack.ss_size = PSTACK_SIZE;
