@@ -24,7 +24,7 @@ void (*temp_fn)(struct closure*, struct closure*, struct closure*);
 
 int allocations;
 
-#define PSTACK_SIZE 64000000
+#define PSTACK_SIZE 16000000
 #define OLD_AGE 10
 
 #define ALLOC_F(v,b) closure* v = alloca(sizeof(closure) + (b) * sizeof(closure*));allocations++;v->moved=0;v->age=0;v->size=(b);
@@ -41,7 +41,7 @@ closure d = { &root, 0, NULL, 0 };
 void apply(closure *self, closure *null, closure *cont);
 
 void exit_c(closure *self, closure *input, closure *cont) {
-	  exit(0);
+      exit(0);
 }
 
 void eval(closure *input, closure *cont) {
@@ -71,7 +71,7 @@ void call_cc(closure *self, closure *input, closure *cont) {
     ALLOC_F(c,1);
     c->data[0]=cont;
     c->fn=cc;
-	input->fn(input, c, cont);
+    input->fn(input, c, cont);
 }
 
 void d0k2(closure *self, closure *input, closure *cont) {
@@ -244,16 +244,16 @@ void initialize (closure *input, closure *cont) {
         call_stack = new_stack;
 
         if (!temp_fn) {
-    	    makecontext(&ucp, (void (*)(void))eval, 2, temp_input, temp_cont);
+            makecontext(&ucp, (void (*)(void))eval, 2, temp_input, temp_cont);
         } else {
-    	    makecontext(&ucp, (void (*)(void))temp_fn, 3, temp_self, temp_input, temp_cont);
+            makecontext(&ucp, (void (*)(void))temp_fn, 3, temp_self, temp_input, temp_cont);
         }
     } else {
         ucp.uc_stack.ss_sp = call_stack = bases[0];
-    	ucp.uc_stack.ss_size = PSTACK_SIZE;
-    	ucp.uc_link = NULL;
+        ucp.uc_stack.ss_size = PSTACK_SIZE;
+        ucp.uc_link = NULL;
 
-    	makecontext(&ucp, (void (*)(void))eval, 2, input, cont);
+        makecontext(&ucp, (void (*)(void))eval, 2, input, cont);
     }
 
     allocations = 0;
